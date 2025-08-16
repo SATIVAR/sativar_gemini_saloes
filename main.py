@@ -69,37 +69,41 @@ def read_root():
     return {"Status": "Agente de Salão AI Backend Ativo"}
 
 @app.post("/api/v1/chat/message", response_model=ChatResponse)
- async def handle_chat_message(body: ChatMessage):
-     try: # <<< INICIE UM BLOCO TRY AQUI
-         user_message = body.message.strip().lower()
- 
-         # 1. Cache First
-         try:
-             cache_response = await supabase.from_("faqs").select("answer").eq("question", user_message).single().execute()
-             if cache_response.data:
-                 print("CACHE HIT!")
-                 return {"reply": cache_response.data['answer']}
-         except Exception:
-             pass
-         
-         print("CACHE MISS. Acionando fluxo de IA...")
- 
-         # 2. Chamada à IA com ferramentas
-         response = await model.generate_content_async(user_message, tools=tools_definition)
+async def handle_chat_message(body: ChatMessage):
+    try: # <<< INICIE UM BLOCO TRY AQUI
+        user_message = body.message.strip().lower()
 
-         # Validação da resposta da IA
-         if not response.candidates:
-             raise ValueError("A resposta da IA não contém candidatos válidos.")
-         
-         response_part = response.candidates[0].content.parts[0]
-         
-         # ... (resto da sua lógica de function calling) ...
+        # 1. Cache First
+        try:
+            cache_response = await supabase.from_("faqs").select("answer").eq("question", user_message).single().execute()
+            if cache_response.data:
+                print("CACHE HIT!")
+                return {"reply": cache_response.data['answer']}
+        except Exception:
+            pass
+        
+        print("CACHE MISS. Acionando fluxo de IA...")
 
-         # Se a resposta não tiver function_call, retorne o texto
-         return {"reply": response.text}
+        # 2. Chamada à IA com ferramentas
+        response = await model.generate_content_async(user_message, tools=tools_definition)
 
-     except Exception as e:
-         # Captura QUALQUER erro que acontecer acima
-         print(f"ERRO CRÍTICO NA FUNÇÃO: {e}") # Isso aparecerá nos seus logs da Vercel!
-         # Retorna um erro HTTP 500 com uma mensagem clara
-         raise HTTPException(status_code=500, detail=f"Ocorreu um erro interno no servidor: {e}")
+        # Validação da resposta da IA
+        if not response.candidates:
+            raise ValueError("A resposta da IA não contém candidatos válidos.")
+        
+        response_part = response.candidates[0].content.parts[0]
+        
+        # ... (resto da sua lógica de function calling) ...
+
+        # Se a resposta não tiver function_call, retorne o texto
+        return {"reply": response.text}
+
+    except Exception as e:
+        # Captura QUALQUER erro que acontecer acima
+        print(f"ERRO CRÍTICO NA FUNÇÃO: {e}") # Isso aparecerá nos seus logs da Vercel!
+        # Retorna um erro HTTP 500 com uma mensagem clara
+        raise HTTPException(status_code=500, detail=f"Ocorreu um erro interno no servidor: {e}")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)         
