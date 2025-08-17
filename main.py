@@ -68,6 +68,28 @@ class ChatResponse(BaseModel):
 def read_root():
     return {"Status": "Agente de Salão AI Backend Ativo"}
 
+@app.get("/api/v1/debug/env")
+async def debug_env():
+    s_url = os.environ.get("SUPABASE_URL")
+    s_key = os.environ.get("SUPABASE_KEY")
+    g_key = os.environ.get("GEMINI_API_KEY")
+
+    # Para segurança, nunca retornamos a chave completa.
+    # Vamos retornar informações sobre ela para podermos validar.
+    key_info = {
+        "is_present": s_key is not None,
+        "length": len(s_key) if s_key else 0,
+        "start": s_key[:5] if s_key else None, # Primeiros 5 caracteres
+        "end": s_key[-5:] if s_key else None,   # Últimos 5 caracteres
+    }
+
+    return {
+        "message": "Valores das variáveis de ambiente lidos pelo script Python.",
+        "supabase_url": s_url,
+        "supabase_key_info": key_info,
+        "gemini_key_is_present": g_key is not None
+    }
+
 @app.post("/api/v1/chat/message", response_model=ChatResponse)
 async def handle_chat_message(body: ChatMessage):
     try:
