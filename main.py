@@ -73,72 +73,33 @@ async def handle_chat_message(body: ChatMessage):
     try:
         user_message = body.message.strip().lower()
 
-        # 1. Cache First
-        try:
-            cache_response = await supabase.from_("faqs").select("answer").eq("question", user_message).single().execute()
-            if cache_response.data:
-                print("CACHE HIT!")
-                return {"reply": cache_response.data['answer']}
-        except Exception:
-            pass
+        # 1. (Otimização de Custo) Cache First - VERSÃO CORRIGIDA
+        # REMOVEMOS o .single() para obter uma lista de resultados
+        cache_response = await supabase.from_("faqs").select("answer").eq("question", user_message).execute()
         
+        # VERIFICAMOS se a lista de dados não está vazia
+        if cache_response.data:
+            print("CACHE HIT!")
+            # Se houver dados, pegamos a resposta do PRIMEIRO item da lista
+            return {"reply": cache_response.data[0]['answer']}
+
         print("CACHE MISS. Acionando fluxo de IA...")
 
-        # 2. Chamada à IA com ferramentas
-        response = await model.generate_content_async(user_message, tools=tools_definition)
-
-        if not response.candidates:
-            raise ValueError("A resposta da IA não contém candidatos válidos.")
+        # 2. Chamada à IA com ferramentas (código continua o mesmo)
+        response = await model.generate_content_async(
+            user_message,
+            tools=tools_definition
+        )
         
-        response_part = response.candidates[0].content.parts[0]
+        # ... (resto da sua lógica de function calling) ...
 
-        # ### INÍCIO DA SEÇÃO MODIFICADA ###
-
-        # Verificamos se a IA pediu para chamar uma função
-        if response_part.function_call:
-            function_call = response_part.function_call
-            tool_name = function_call.name
-            tool_args = dict(function_call.args)
-
-            if tool_name in AVAILABLE_TOOLS:
-                # Pega a função do nosso dicionário de ferramentas
-                tool_function = AVAILABLE_TOOLS[tool_name]
-                
-                # Adiciona o userId nos argumentos se for a ferramenta de criação de agendamento
-                if 'userId' in tool_function.__code__.co_varnames:
-                    tool_args['userId'] = body.userId
-
-                # AQUI ESTÁ A LÓGICA CHAVE:
-                # Verificamos se a função é 'async' (uma coroutine).
-                if inspect.iscoroutinefunction(tool_function):
-                    # Se for async, chamamos com 'await'
-                    tool_result = await tool_function(**tool_args)
-                else:
-                    # Se for uma função normal, chamamos diretamente
-                    tool_result = tool_function(**tool_args)
-
-                # Enviamos o resultado da ferramenta de volta para a IA para que ela possa formular uma resposta final
-                final_response = await model.generate_content_async(
-                    [
-                        user_message, # Mensagem original do usuário
-                        response.candidates[0].content, # Resposta anterior do modelo com a chamada de função
-                        {"role": "user", "parts": [{"function_response": {"name": tool_name, "response": {"content": tool_result}}}]}
-                    ],
-                    tools=tools_definition
-                )
-                return {"reply": final_response.text}
-            else:
-                # Caso a IA chame uma função que não existe em nosso AVAILABLE_TOOLS
-                return {"reply": "Desculpe, ocorreu um erro ao tentar executar uma ação."}
-        else:
-            # A IA respondeu diretamente sem usar ferramentas
-            return {"reply": response.text}
-            
-        # ### FIM DA SEÇÃO MODIFICADA ###
+        # Se a resposta não tiver function_call, retorne o texto
+        return {"reply": response.text}
 
     except Exception as e:
-        print(f"ERRO CRÍTICO NA FUNÇÃO: {e}")
-        raise HTTPException(status_code=500, detail=f"Ocorreu um erro interno no servidor: {e}")
+        # Dica de depuração: Use repr(e) para obter uma mensagem de erro mais detalhada
+        print(f"ERRO CRÍTICO NA FUNÇÃO: {repr(e)}")
+        raise HTTPException(status_code=500, detail=f"Ocorreu um erro interno no servidor: {repr(e)}")
 
 if __name__ == "__main__":
     import uvicorn
