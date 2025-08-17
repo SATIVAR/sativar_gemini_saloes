@@ -11,6 +11,7 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 from tools import AVAILABLE_TOOLS # Importa nosso mapeamento de ferramentas
 from fastapi import HTTPException
+import inspect # <<< ADICIONE ESTE IMPORT NO TOPO
 
 load_dotenv()
 
@@ -22,7 +23,6 @@ model = genai.GenerativeModel(
 )
 
 # --- Definição das ferramentas para o modelo entender ---
-# Isto é o que o Gemini usa para saber quais funções chamar
 tools_definition = [
     {
         "name": "get_available_slots",
@@ -70,7 +70,7 @@ def read_root():
 
 @app.post("/api/v1/chat/message", response_model=ChatResponse)
 async def handle_chat_message(body: ChatMessage):
-    try: # <<< INICIE UM BLOCO TRY AQUI
+    try:
         user_message = body.message.strip().lower()
 
         # 1. Cache First
@@ -87,23 +87,59 @@ async def handle_chat_message(body: ChatMessage):
         # 2. Chamada à IA com ferramentas
         response = await model.generate_content_async(user_message, tools=tools_definition)
 
-        # Validação da resposta da IA
         if not response.candidates:
             raise ValueError("A resposta da IA não contém candidatos válidos.")
         
         response_part = response.candidates[0].content.parts[0]
-        
-        # ... (resto da sua lógica de function calling) ...
 
-        # Se a resposta não tiver function_call, retorne o texto
-        return {"reply": response.text}
+        # ### INÍCIO DA SEÇÃO MODIFICADA ###
+
+        # Verificamos se a IA pediu para chamar uma função
+        if response_part.function_call:
+            function_call = response_part.function_call
+            tool_name = function_call.name
+            tool_args = dict(function_call.args)
+
+            if tool_name in AVAILABLE_TOOLS:
+                # Pega a função do nosso dicionário de ferramentas
+                tool_function = AVAILABLE_TOOLS[tool_name]
+                
+                # Adiciona o userId nos argumentos se for a ferramenta de criação de agendamento
+                if 'userId' in tool_function.__code__.co_varnames:
+                    tool_args['userId'] = body.userId
+
+                # AQUI ESTÁ A LÓGICA CHAVE:
+                # Verificamos se a função é 'async' (uma coroutine).
+                if inspect.iscoroutinefunction(tool_function):
+                    # Se for async, chamamos com 'await'
+                    tool_result = await tool_function(**tool_args)
+                else:
+                    # Se for uma função normal, chamamos diretamente
+                    tool_result = tool_function(**tool_args)
+
+                # Enviamos o resultado da ferramenta de volta para a IA para que ela possa formular uma resposta final
+                final_response = await model.generate_content_async(
+                    [
+                        user_message, # Mensagem original do usuário
+                        response.candidates[0].content, # Resposta anterior do modelo com a chamada de função
+                        {"role": "user", "parts": [{"function_response": {"name": tool_name, "response": {"content": tool_result}}}]}
+                    ],
+                    tools=tools_definition
+                )
+                return {"reply": final_response.text}
+            else:
+                # Caso a IA chame uma função que não existe em nosso AVAILABLE_TOOLS
+                return {"reply": "Desculpe, ocorreu um erro ao tentar executar uma ação."}
+        else:
+            # A IA respondeu diretamente sem usar ferramentas
+            return {"reply": response.text}
+            
+        # ### FIM DA SEÇÃO MODIFICADA ###
 
     except Exception as e:
-        # Captura QUALQUER erro que acontecer acima
-        print(f"ERRO CRÍTICO NA FUNÇÃO: {e}") # Isso aparecerá nos seus logs da Vercel!
-        # Retorna um erro HTTP 500 com uma mensagem clara
+        print(f"ERRO CRÍTICO NA FUNÇÃO: {e}")
         raise HTTPException(status_code=500, detail=f"Ocorreu um erro interno no servidor: {e}")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)         
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
